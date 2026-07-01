@@ -21,6 +21,9 @@ const DEFAULT_SETTINGS: JSRunnerSettings = {
   maxExecutionTime: 5000,
 };
 
+// Signature of the functions built dynamically from user code blocks.
+type RunnerFn = (app: App, print: (...args: unknown[]) => void) => unknown;
+
 export default class JSRunnerPlugin extends Plugin {
   settings: JSRunnerSettings;
 
@@ -54,12 +57,10 @@ export default class JSRunnerPlugin extends Plugin {
 
     // Add settings tab
     this.addSettingTab(new JSRunnerSettingTab(this.app, this));
-
-    console.log("JS Runner plugin loaded.");
   }
 
   onunload() {
-    console.log("JS Runner plugin unloaded.");
+    // Nothing to clean up currently; kept for future teardown logic.
   }
 
   private processJSBlock(
@@ -90,19 +91,19 @@ export default class JSRunnerPlugin extends Plugin {
 
     // Output section
     const outputSection = wrapper.createDiv({ cls: "js-runner-output-section" });
-    outputSection.style.display = "none";
-    const outputLabel = outputSection.createDiv({ cls: "js-runner-output-label", text: "Output" });
+    outputSection.addClass("js-runner-hidden");
+    outputSection.createDiv({ cls: "js-runner-output-label", text: "Output" });
     const outputEl = outputSection.createDiv({ cls: "js-runner-output" });
 
     clearBtn.addEventListener("click", () => {
       outputEl.empty();
-      outputSection.style.display = "none";
+      outputSection.addClass("js-runner-hidden");
       statusEl.setText("");
       statusEl.className = "js-runner-status";
     });
 
     runBtn.addEventListener("click", () => {
-      this.executeCode(source, outputEl, outputSection, statusEl, runBtn);
+      void this.executeCode(source, outputEl, outputSection, statusEl, runBtn);
     });
   }
 
@@ -114,7 +115,7 @@ export default class JSRunnerPlugin extends Plugin {
     runBtn: HTMLElement
   ) {
     outputEl.empty();
-    outputSection.style.display = "block";
+    outputSection.removeClass("js-runner-hidden");
     statusEl.setText("Running…");
     statusEl.className = "js-runner-status running";
     (runBtn as HTMLButtonElement).disabled = true;
@@ -123,24 +124,21 @@ export default class JSRunnerPlugin extends Plugin {
 
     // Capture console output
     const logs: Array<{ type: string; args: unknown[] }> = [];
-    const originalConsole = {
-      log: console.log,
-      warn: console.warn,
-      error: console.error,
-      info: console.info,
-    };
+    const consoleMethods = ["log", "warn", "error", "info"] as const;
+    type ConsoleMethod = (typeof consoleMethods)[number];
+    const originalConsole: Partial<Record<ConsoleMethod, (...args: unknown[]) => void>> = {};
 
     const intercept =
-      (type: string) =>
+      (type: ConsoleMethod) =>
       (...args: unknown[]) => {
         logs.push({ type, args });
-        (originalConsole as Record<string, (...a: unknown[]) => void>)[type](...args);
+        originalConsole[type]?.(...args);
       };
 
-    console.log = intercept("log");
-    console.warn = intercept("warn");
-    console.error = intercept("error");
-    console.info = intercept("info");
+    for (const method of consoleMethods) {
+      originalConsole[method] = console[method].bind(console);
+      console[method] = intercept(method);
+    }
 
     let result: unknown = undefined;
     let errorOccurred = false;
@@ -152,17 +150,20 @@ export default class JSRunnerPlugin extends Plugin {
       };
 
       if (this.settings.allowAsync) {
-        // Wrap in async IIFE to support top-level await
+        // Wrap in async IIFE to support top-level await.
+        // The Function constructor is intentional here: it is how this plugin
+        // executes user-authored code blocks, which is its entire purpose.
+        // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
         const asyncFn = new Function(
           "app",
           "print",
           `return (async () => { ${source} })()`
-        );
+        ) as RunnerFn;
         const promise = asyncFn(this.app, print);
 
         // Apply timeout
         const timeout = new Promise<never>((_, reject) =>
-          setTimeout(
+          window.setTimeout(
             () => reject(new Error(`Execution timed out after ${this.settings.maxExecutionTime}ms`)),
             this.settings.maxExecutionTime
           )
@@ -170,7 +171,8 @@ export default class JSRunnerPlugin extends Plugin {
 
         result = await Promise.race([promise, timeout]);
       } else {
-        const syncFn = new Function("app", "print", source);
+        // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
+        const syncFn = new Function("app", "print", source) as RunnerFn;
         result = syncFn(this.app, print);
       }
     } catch (err) {
@@ -178,10 +180,12 @@ export default class JSRunnerPlugin extends Plugin {
       logs.push({ type: "error", args: [err instanceof Error ? err.message : String(err)] });
     } finally {
       // Restore console
-      console.log = originalConsole.log;
-      console.warn = originalConsole.warn;
-      console.error = originalConsole.error;
-      console.info = originalConsole.info;
+      for (const method of consoleMethods) {
+        const original = originalConsole[method];
+        if (original) {
+          console[method] = original;
+        }
+      }
     }
 
     const elapsed = (performance.now() - startTime).toFixed(1);
@@ -200,15 +204,7 @@ export default class JSRunnerPlugin extends Plugin {
       if (entry.type === "info") prefix.setText("ℹ ");
       line.appendChild(prefix);
 
-      const text = entry.args
-        .map((a) => {
-          if (typeof a === "object") {
-            try { return JSON.stringify(a, null, 2); }
-            catch { return String(a); }
-          }
-          return String(a);
-        })
-        .join(" ");
+      const text = entry.args.map((a) => this.formatValue(a)).join(" ");
 
       const textNode = line.createSpan({ cls: "js-runner-text" });
       textNode.setText(text);
@@ -220,11 +216,7 @@ export default class JSRunnerPlugin extends Plugin {
       const retPrefix = retLine.createSpan({ cls: "js-runner-prefix" });
       retPrefix.setText("↩ ");
       const retText = retLine.createSpan({ cls: "js-runner-text" });
-      retText.setText(
-        typeof result === "object"
-          ? JSON.stringify(result, null, 2)
-          : String(result)
-      );
+      retText.setText(this.formatValue(result));
     }
 
     // Update status
@@ -241,8 +233,30 @@ export default class JSRunnerPlugin extends Plugin {
     (runBtn as HTMLButtonElement).disabled = false;
   }
 
+  /**
+   * Safely render an arbitrary value captured from user code as a string,
+   * without relying on the default Object.prototype.toString() behavior.
+   */
+  private formatValue(value: unknown): string {
+    if (value === null) return "null";
+    if (typeof value === "undefined") return "undefined";
+    if (typeof value === "object") {
+      try {
+        return JSON.stringify(value, null, 2);
+      } catch {
+        return Object.prototype.toString.call(value);
+      }
+    }
+    if (typeof value === "function") {
+      return "[Function]";
+    }
+    // Narrowed to string | number | boolean | bigint | symbol.
+    return String(value);
+  }
+
   async loadSettings() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    const data = (await this.loadData()) as Partial<JSRunnerSettings> | null;
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
   }
 
   async saveSettings() {
@@ -250,6 +264,10 @@ export default class JSRunnerPlugin extends Plugin {
   }
 }
 
+// This settings tab uses the imperative Setting API. Migrating to the
+// declarative getSettingDefinitions() API (Obsidian 1.13+) is a larger,
+// optional follow-up and is intentionally out of scope here.
+// eslint-disable-next-line obsidianmd/settings-tab/prefer-setting-definitions
 class JSRunnerSettingTab extends PluginSettingTab {
   plugin: JSRunnerPlugin;
 
@@ -261,7 +279,8 @@ class JSRunnerSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "JS Runner Settings" });
+
+    new Setting(containerEl).setName("JS Runner Settings").setHeading();
 
     new Setting(containerEl)
       .setName("Show execution time")

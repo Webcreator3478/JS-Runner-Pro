@@ -103,6 +103,10 @@
   background: var(--background-primary);
 }
 
+.js-runner-output-section.js-runner-hidden {
+  display: none;
+}
+
 .js-runner-output-label {
   font-size: 0.7em;
   font-family: var(--font-interface);
