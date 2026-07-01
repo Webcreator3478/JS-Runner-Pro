@@ -16,7 +16,6 @@
     "esbuild": "^0.28.1",
     "eslint": "^9.0.0",
     "eslint-plugin-obsidianmd": "^0.4.0",
-    "is-builtin-module": "4.0.0",
     "obsidian": "latest",
     "tslib": "2.4.0",
     "typescript": "^5.4.5",

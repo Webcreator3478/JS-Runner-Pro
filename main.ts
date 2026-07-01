@@ -2,6 +2,7 @@ import {
   App,
   Editor,
   MarkdownView,
+  Modal,
   Notice,
   Plugin,
   PluginSettingTab,
@@ -13,13 +14,65 @@ interface JSRunnerSettings {
   showExecutionTime: boolean;
   allowAsync: boolean;
   maxExecutionTime: number;
+  // Whether the user has been shown, and accepted, the arbitrary-code-execution
+  // warning. This plugin's entire purpose is to run JS typed into a note via
+  // `new Function(...)`, which is equivalent to eval(). That's intentional and
+  // can't be replaced with a "safer" execution path without removing the
+  // feature, so instead we make sure the user has explicitly opted in before
+  // anything ever runs.
+  acknowledgedRisk: boolean;
 }
 
 const DEFAULT_SETTINGS: JSRunnerSettings = {
   showExecutionTime: true,
   allowAsync: true,
   maxExecutionTime: 5000,
+  acknowledgedRisk: false,
 };
+
+// Shown once, before the very first code block is ever executed, so the user
+// makes an informed choice rather than discovering after the fact that
+// "Run" means "execute arbitrary JavaScript with full app access".
+class RiskAcknowledgementModal extends Modal {
+  private onDecision: (accepted: boolean) => void;
+
+  constructor(app: App, onDecision: (accepted: boolean) => void) {
+    super(app);
+    this.onDecision = onDecision;
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.createEl("h2", { text: "JS Runner will execute arbitrary code" });
+    contentEl.createEl("p", {
+      text:
+        "Code blocks marked js-run / javascript-run are executed as real JavaScript " +
+        "with access to the Obsidian app object, exactly like eval(). Only run blocks " +
+        "you wrote yourself or fully trust — this plugin cannot sandbox or vet the code " +
+        "for you.",
+    });
+    const btnRow = contentEl.createDiv({ cls: "js-runner-modal-btn-row" });
+
+    const cancelBtn = btnRow.createEl("button", { text: "Cancel" });
+    cancelBtn.addEventListener("click", () => {
+      this.close();
+      this.onDecision(false);
+    });
+
+    const confirmBtn = btnRow.createEl("button", {
+      text: "I understand, enable execution",
+      cls: "mod-cta",
+    });
+    confirmBtn.addEventListener("click", () => {
+      this.close();
+      this.onDecision(true);
+    });
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+}
 
 // A minimal console-like object handed to user code blocks. Kept separate
 // from the real global console so we never need to monkey-patch it.
@@ -114,8 +167,35 @@ export default class JSRunnerPlugin extends Plugin {
     });
 
     runBtn.addEventListener("click", () => {
-      void this.executeCode(source, outputEl, outputSection, statusEl, runBtn);
+      this.confirmRiskThenRun(source, outputEl, outputSection, statusEl, runBtn);
     });
+  }
+
+  /**
+   * Gate the very first execution behind an explicit, informed opt-in. After
+   * the user has acknowledged once, subsequent runs proceed immediately -
+   * this is a one-time consent step, not a confirmation dialog on every run.
+   */
+  private confirmRiskThenRun(
+    source: string,
+    outputEl: HTMLElement,
+    outputSection: HTMLElement,
+    statusEl: HTMLElement,
+    runBtn: HTMLElement
+  ) {
+    if (this.settings.acknowledgedRisk) {
+      void this.executeCode(source, outputEl, outputSection, statusEl, runBtn);
+      return;
+    }
+
+    new RiskAcknowledgementModal(this.app, (accepted) => {
+      if (!accepted) {
+        return;
+      }
+      this.settings.acknowledgedRisk = true;
+      void this.saveSettings();
+      void this.executeCode(source, outputEl, outputSection, statusEl, runBtn);
+    }).open();
   }
 
   private async executeCode(
@@ -162,7 +242,7 @@ export default class JSRunnerPlugin extends Plugin {
 
       if (this.settings.allowAsync) {
         // Wrap in async IIFE to support top-level await.
-        // eslint-disable-next-line @typescript-eslint/no-implied-eval -- Function constructor is intentional here: it is how this plugin executes user-authored code blocks, which is its entire purpose. (no-new-func is disabled for this file via obsidianmd/rule-custom-message in eslint config.)
+        // eslint-disable-next-line @typescript-eslint/no-implied-eval -- Function constructor is intentional here: it is how this plugin executes user-authored code blocks, which is its entire purpose (gated behind the RiskAcknowledgementModal consent flow above; no-new-func is disabled for this file via obsidianmd/rule-custom-message in eslint config.)
         const asyncFnRaw: unknown = new Function(
           "app",
           "print",
@@ -182,7 +262,7 @@ export default class JSRunnerPlugin extends Plugin {
 
         result = await Promise.race([promise, timeout]);
       } else {
-        // eslint-disable-next-line @typescript-eslint/no-implied-eval -- Function constructor is intentional here: it is how this plugin executes user-authored code blocks, which is its entire purpose. (no-new-func is disabled for this file via obsidianmd/rule-custom-message in eslint config.)
+        // eslint-disable-next-line @typescript-eslint/no-implied-eval -- Function constructor is intentional here: it is how this plugin executes user-authored code blocks, which is its entire purpose (gated behind the RiskAcknowledgementModal consent flow above; no-new-func is disabled for this file via obsidianmd/rule-custom-message in eslint config.)
         const syncFnRaw: unknown = new Function("app", "print", "console", source);
         const syncFn = syncFnRaw as RunnerFn;
         result = syncFn(this.app, print, sandboxConsole);
@@ -254,8 +334,9 @@ export default class JSRunnerPlugin extends Plugin {
     if (typeof value === "function") {
       return "[Function]";
     }
-    // Narrowed to string | number | boolean | bigint | symbol.
-    return String(value as string | number | boolean | bigint | symbol);
+    // At this point value is narrowed to string | number | boolean | bigint | symbol,
+    // all of which String() already accepts without a cast.
+    return String(value);
   }
 
   async loadSettings() {
@@ -284,6 +365,24 @@ class JSRunnerSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
+
+    new Setting(containerEl)
+      .setName("Code execution warning")
+      .setDesc(
+        this.plugin.settings.acknowledgedRisk
+          ? "You've acknowledged that run blocks execute arbitrary JavaScript. You can reset this to see the warning again before the next run."
+          : "You'll be asked to confirm this warning the next time you run a code block."
+      )
+      .addButton((button) =>
+        button
+          .setButtonText("Reset acknowledgement")
+          .setDisabled(!this.plugin.settings.acknowledgedRisk)
+          .onClick(async () => {
+            this.plugin.settings.acknowledgedRisk = false;
+            await this.plugin.saveSettings();
+            this.display();
+          })
+      );
 
     for (const def of this.getSettingDefinitions()) {
       const setting = new Setting(containerEl).setName(def.name).setDesc(def.desc);
