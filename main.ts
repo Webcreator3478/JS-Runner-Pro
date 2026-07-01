@@ -162,7 +162,7 @@ export default class JSRunnerPlugin extends Plugin {
 
       if (this.settings.allowAsync) {
         // Wrap in async IIFE to support top-level await.
-        // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func -- Function constructor is intentional here: it is how this plugin executes user-authored code blocks, which is its entire purpose.
+        // eslint-disable-next-line @typescript-eslint/no-implied-eval -- Function constructor is intentional here: it is how this plugin executes user-authored code blocks, which is its entire purpose. (no-new-func is disabled for this file via obsidianmd/rule-custom-message in eslint config.)
         const asyncFnRaw: unknown = new Function(
           "app",
           "print",
@@ -170,7 +170,6 @@ export default class JSRunnerPlugin extends Plugin {
           `return (async () => { ${source} })()`
         );
         const asyncFn = asyncFnRaw as RunnerFn;
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- asyncFn's shape is guaranteed by the fixed argument list passed to the Function constructor above.
         const promise = asyncFn(this.app, print, sandboxConsole);
 
         // Apply timeout
@@ -183,10 +182,9 @@ export default class JSRunnerPlugin extends Plugin {
 
         result = await Promise.race([promise, timeout]);
       } else {
-        // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func -- Function constructor is intentional here: it is how this plugin executes user-authored code blocks, which is its entire purpose.
+        // eslint-disable-next-line @typescript-eslint/no-implied-eval -- Function constructor is intentional here: it is how this plugin executes user-authored code blocks, which is its entire purpose. (no-new-func is disabled for this file via obsidianmd/rule-custom-message in eslint config.)
         const syncFnRaw: unknown = new Function("app", "print", "console", source);
         const syncFn = syncFnRaw as RunnerFn;
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- syncFn's shape is guaranteed by the fixed argument list passed to the Function constructor above.
         result = syncFn(this.app, print, sandboxConsole);
       }
     } catch (err) {
