@@ -5,7 +5,6 @@ import {
   Notice,
   Plugin,
   PluginSettingTab,
-  Setting,
   MarkdownPostProcessorContext,
 } from "obsidian";
 
@@ -21,8 +20,19 @@ const DEFAULT_SETTINGS: JSRunnerSettings = {
   maxExecutionTime: 5000,
 };
 
+// A minimal console-like object handed to user code blocks. Kept separate
+// from the real global console so we never need to monkey-patch it.
+type ConsoleLike = Record<
+  "log" | "warn" | "error" | "info",
+  (...args: unknown[]) => void
+>;
+
 // Signature of the functions built dynamically from user code blocks.
-type RunnerFn = (app: App, print: (...args: unknown[]) => void) => unknown;
+type RunnerFn = (
+  app: App,
+  print: (...args: unknown[]) => void,
+  console: ConsoleLike
+) => unknown;
 
 export default class JSRunnerPlugin extends Plugin {
   settings: JSRunnerSettings;
@@ -122,23 +132,23 @@ export default class JSRunnerPlugin extends Plugin {
 
     const startTime = performance.now();
 
-    // Capture console output
+    // Capture console output. Rather than monkey-patching the global
+    // console object, we hand user code a local `console` parameter of
+    // the same name - JS scoping means their calls resolve to this
+    // sandboxed version instead of the real one, so nothing needs to be
+    // restored afterwards.
     const logs: Array<{ type: string; args: unknown[] }> = [];
-    const consoleMethods = ["log", "warn", "error", "info"] as const;
-    type ConsoleMethod = (typeof consoleMethods)[number];
-    const originalConsole: Partial<Record<ConsoleMethod, (...args: unknown[]) => void>> = {};
-
-    const intercept =
-      (type: ConsoleMethod) =>
+    const makeLogger =
+      (type: "log" | "warn" | "error" | "info") =>
       (...args: unknown[]) => {
         logs.push({ type, args });
-        originalConsole[type]?.(...args);
       };
-
-    for (const method of consoleMethods) {
-      originalConsole[method] = console[method].bind(console);
-      console[method] = intercept(method);
-    }
+    const sandboxConsole: ConsoleLike = {
+      log: makeLogger("log"),
+      warn: makeLogger("warn"),
+      error: makeLogger("error"),
+      info: makeLogger("info"),
+    };
 
     let result: unknown = undefined;
     let errorOccurred = false;
@@ -151,15 +161,14 @@ export default class JSRunnerPlugin extends Plugin {
 
       if (this.settings.allowAsync) {
         // Wrap in async IIFE to support top-level await.
-        // The Function constructor is intentional here: it is how this plugin
-        // executes user-authored code blocks, which is its entire purpose.
-        // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
+        // eslint-disable-next-line @typescript-eslint/no-implied-eval, obsidianmd/rule-custom-message -- Function constructor is intentional here: it is how this plugin executes user-authored code blocks, which is its entire purpose.
         const asyncFn = new Function(
           "app",
           "print",
+          "console",
           `return (async () => { ${source} })()`
         ) as RunnerFn;
-        const promise = asyncFn(this.app, print);
+        const promise = asyncFn(this.app, print, sandboxConsole);
 
         // Apply timeout
         const timeout = new Promise<never>((_, reject) =>
@@ -171,21 +180,13 @@ export default class JSRunnerPlugin extends Plugin {
 
         result = await Promise.race([promise, timeout]);
       } else {
-        // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
-        const syncFn = new Function("app", "print", source) as RunnerFn;
-        result = syncFn(this.app, print);
+        // eslint-disable-next-line @typescript-eslint/no-implied-eval, obsidianmd/rule-custom-message -- Function constructor is intentional here: it is how this plugin executes user-authored code blocks, which is its entire purpose.
+        const syncFn = new Function("app", "print", "console", source) as RunnerFn;
+        result = syncFn(this.app, print, sandboxConsole);
       }
     } catch (err) {
       errorOccurred = true;
       logs.push({ type: "error", args: [err instanceof Error ? err.message : String(err)] });
-    } finally {
-      // Restore console
-      for (const method of consoleMethods) {
-        const original = originalConsole[method];
-        if (original) {
-          console[method] = original;
-        }
-      }
     }
 
     const elapsed = (performance.now() - startTime).toFixed(1);
@@ -244,14 +245,14 @@ export default class JSRunnerPlugin extends Plugin {
       try {
         return JSON.stringify(value, null, 2);
       } catch {
-        return Object.prototype.toString.call(value);
+        return String(Object.prototype.toString.call(value));
       }
     }
     if (typeof value === "function") {
       return "[Function]";
     }
     // Narrowed to string | number | boolean | bigint | symbol.
-    return String(value);
+    return String(value as string | number | boolean | bigint | symbol);
   }
 
   async loadSettings() {
@@ -264,10 +265,9 @@ export default class JSRunnerPlugin extends Plugin {
   }
 }
 
-// This settings tab uses the imperative Setting API. Migrating to the
-// declarative getSettingDefinitions() API (Obsidian 1.13+) is a larger,
-// optional follow-up and is intentionally out of scope here.
-// eslint-disable-next-line obsidianmd/settings-tab/prefer-setting-definitions
+// Declarative settings definitions (Obsidian 1.13+) so these settings show
+// up in the global settings search, replacing the older imperative
+// display()-based Setting API.
 class JSRunnerSettingTab extends PluginSettingTab {
   plugin: JSRunnerPlugin;
 
@@ -276,49 +276,32 @@ class JSRunnerSettingTab extends PluginSettingTab {
     this.plugin = plugin;
   }
 
-  display(): void {
-    const { containerEl } = this;
-    containerEl.empty();
-
-    new Setting(containerEl).setName("JS Runner Settings").setHeading();
-
-    new Setting(containerEl)
-      .setName("Show execution time")
-      .setDesc("Display how long each code block took to run.")
-      .addToggle((toggle) =>
-        toggle
-          .setValue(this.plugin.settings.showExecutionTime)
-          .onChange(async (value) => {
-            this.plugin.settings.showExecutionTime = value;
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Allow async / await")
-      .setDesc("Wrap code blocks in an async context to support top-level await.")
-      .addToggle((toggle) =>
-        toggle
-          .setValue(this.plugin.settings.allowAsync)
-          .onChange(async (value) => {
-            this.plugin.settings.allowAsync = value;
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Max execution time (ms)")
-      .setDesc("Abort async code blocks that run longer than this many milliseconds.")
-      .addText((text) =>
-        text
-          .setValue(String(this.plugin.settings.maxExecutionTime))
-          .onChange(async (value) => {
-            const num = parseInt(value, 10);
-            if (!isNaN(num) && num > 0) {
-              this.plugin.settings.maxExecutionTime = num;
-              await this.plugin.saveSettings();
-            }
-          })
-      );
+  getSettingDefinitions() {
+    return [
+      {
+        name: "Show execution time",
+        desc: "Display how long each code block took to run.",
+        control: { type: "toggle" as const, key: "showExecutionTime" as const },
+      },
+      {
+        name: "Allow async / await",
+        desc: "Wrap code blocks in an async context to support top-level await.",
+        control: { type: "toggle" as const, key: "allowAsync" as const },
+      },
+      {
+        name: "Max execution time (ms)",
+        desc: "Abort async code blocks that run longer than this many milliseconds.",
+        control: {
+          type: "number" as const,
+          key: "maxExecutionTime" as const,
+          min: 1,
+          step: 1,
+          validate: (value: number) =>
+            !Number.isFinite(value) || value <= 0
+              ? "Enter a positive number of milliseconds."
+              : undefined,
+        },
+      },
+    ];
   }
 }
