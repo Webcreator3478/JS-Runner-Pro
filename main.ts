@@ -5,6 +5,7 @@ import {
   Notice,
   Plugin,
   PluginSettingTab,
+  Setting,
   MarkdownPostProcessorContext,
 } from "obsidian";
 
@@ -161,7 +162,7 @@ export default class JSRunnerPlugin extends Plugin {
 
       if (this.settings.allowAsync) {
         // Wrap in async IIFE to support top-level await.
-        // eslint-disable-next-line @typescript-eslint/no-implied-eval, obsidianmd/rule-custom-message -- Function constructor is intentional here: it is how this plugin executes user-authored code blocks, which is its entire purpose.
+        // eslint-disable-next-line @typescript-eslint/no-implied-eval -- Function constructor is intentional here: it is how this plugin executes user-authored code blocks, which is its entire purpose.
         const asyncFn = new Function(
           "app",
           "print",
@@ -180,7 +181,7 @@ export default class JSRunnerPlugin extends Plugin {
 
         result = await Promise.race([promise, timeout]);
       } else {
-        // eslint-disable-next-line @typescript-eslint/no-implied-eval, obsidianmd/rule-custom-message -- Function constructor is intentional here: it is how this plugin executes user-authored code blocks, which is its entire purpose.
+        // eslint-disable-next-line @typescript-eslint/no-implied-eval -- Function constructor is intentional here: it is how this plugin executes user-authored code blocks, which is its entire purpose.
         const syncFn = new Function("app", "print", "console", source) as RunnerFn;
         result = syncFn(this.app, print, sandboxConsole);
       }
@@ -265,15 +266,53 @@ export default class JSRunnerPlugin extends Plugin {
   }
 }
 
-// Declarative settings definitions (Obsidian 1.13+) so these settings show
-// up in the global settings search, replacing the older imperative
-// display()-based Setting API.
+// Settings definitions are declared once and used both to build the
+// imperative display() UI (required for Obsidian < 1.13, and generally
+// for the settings to render at all) and, potentially, any future
+// declarative registration (Obsidian 1.13+) so these settings could also
+// show up in the global settings search.
 class JSRunnerSettingTab extends PluginSettingTab {
   plugin: JSRunnerPlugin;
 
   constructor(app: App, plugin: JSRunnerPlugin) {
     super(app, plugin);
     this.plugin = plugin;
+  }
+
+  display(): void {
+    const { containerEl } = this;
+    containerEl.empty();
+
+    for (const def of this.getSettingDefinitions()) {
+      const setting = new Setting(containerEl).setName(def.name).setDesc(def.desc);
+
+      if (def.control.type === "toggle") {
+        const key = def.control.key;
+        setting.addToggle((toggle) =>
+          toggle.setValue(this.plugin.settings[key]).onChange(async (value) => {
+            this.plugin.settings[key] = value;
+            await this.plugin.saveSettings();
+          })
+        );
+      } else if (def.control.type === "number") {
+        const key = def.control.key;
+        setting.addText((text) => {
+          text.inputEl.type = "number";
+          text
+            .setValue(String(this.plugin.settings[key]))
+            .onChange(async (value) => {
+              const parsed = Number(value);
+              const error = def.control.validate?.(parsed);
+              if (error) {
+                new Notice(error);
+                return;
+              }
+              this.plugin.settings[key] = parsed;
+              await this.plugin.saveSettings();
+            });
+        });
+      }
+    }
   }
 
   getSettingDefinitions() {
