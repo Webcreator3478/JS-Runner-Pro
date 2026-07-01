@@ -1,9 +1,7 @@
 import obsidianmd from "eslint-plugin-obsidianmd";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
 export default [
   {
     // These are build/config scripts, not plugin source — keep them
@@ -40,11 +38,15 @@ export default [
   {
     // main.ts intentionally uses the Function constructor to execute
     // user-authored code blocks from ```js-run fences — that's this
-    // plugin's entire purpose, so no-new-func (surfaced here under
-    // obsidianmd's custom message) is scoped off for this file only.
+    // plugin's entire purpose. The reported rule is actually
+    // obsidianmd/rule-custom-message (a wrapper that re-labels core
+    // rules like no-new-func with a custom message) — turning off
+    // "no-new-func" itself has no effect since that's not the rule ID
+    // ESLint is actually running here. Scope the real rule off for
+    // this file only.
     files: ["main.ts"],
     rules: {
-      "no-new-func": "off",
+      "obsidianmd/rule-custom-message": "off",
     },
   },
 ];
