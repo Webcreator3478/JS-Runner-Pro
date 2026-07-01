@@ -320,23 +320,30 @@ export default class JSRunnerPlugin extends Plugin {
   /**
    * Safely render an arbitrary value captured from user code as a string,
    * without relying on the default Object.prototype.toString() behavior.
+   * Each branch below narrows `value` to a concrete type before converting
+   * it, so we never fall through to Object's default ('[object Object]')
+   * stringification by accident.
    */
   private formatValue(value: unknown): string {
     if (value === null) return "null";
     if (typeof value === "undefined") return "undefined";
-    if (typeof value === "object") {
-      try {
-        return JSON.stringify(value, null, 2);
-      } catch {
-        return String(Object.prototype.toString.call(value));
-      }
+    if (typeof value === "function") return "[Function]";
+    if (typeof value === "object") return this.formatObjectValue(value);
+    if (typeof value === "string") return value;
+    if (typeof value === "number") return value.toString();
+    if (typeof value === "boolean") return value.toString();
+    if (typeof value === "bigint") return value.toString();
+    if (typeof value === "symbol") return value.toString();
+    // Exhaustive for the runtime typeof values; kept as a defensive fallback.
+    return Object.prototype.toString.call(value);
+  }
+
+  private formatObjectValue(value: object): string {
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return Object.prototype.toString.call(value);
     }
-    if (typeof value === "function") {
-      return "[Function]";
-    }
-    // At this point value is narrowed to string | number | boolean | bigint | symbol,
-    // all of which String() already accepts without a cast.
-    return String(value);
   }
 
   async loadSettings() {
@@ -362,6 +369,7 @@ class JSRunnerSettingTab extends PluginSettingTab {
     this.plugin = plugin;
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-deprecated -- display() is deprecated since Obsidian 1.13 in favor of the declarative settings API, but that replacement isn't available on this plugin's minAppVersion, so the imperative override is still required for the settings tab to render at all.
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
@@ -373,16 +381,18 @@ class JSRunnerSettingTab extends PluginSettingTab {
           ? "You've acknowledged that run blocks execute arbitrary JavaScript. You can reset this to see the warning again before the next run."
           : "You'll be asked to confirm this warning the next time you run a code block."
       )
-      .addButton((button) =>
-        button
-          .setButtonText("Reset acknowledgement")
-          .setDisabled(!this.plugin.settings.acknowledgedRisk)
-          .onClick(async () => {
-            this.plugin.settings.acknowledgedRisk = false;
-            await this.plugin.saveSettings();
-            this.display();
-          })
-      );
+      .addButton((button) => {
+        button.setButtonText("Reset acknowledgement");
+        // Avoid ButtonComponent.setDisabled() here since it requires Obsidian
+        // >= 1.2.3; toggling the underlying button element directly keeps
+        // this working on the plugin's declared minAppVersion.
+        (button.buttonEl as HTMLButtonElement).disabled = !this.plugin.settings.acknowledgedRisk;
+        button.onClick(async () => {
+          this.plugin.settings.acknowledgedRisk = false;
+          await this.plugin.saveSettings();
+          this.display();
+        });
+      });
 
     for (const def of this.getSettingDefinitions()) {
       const setting = new Setting(containerEl).setName(def.name).setDesc(def.desc);
