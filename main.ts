@@ -335,14 +335,14 @@ export default class JSRunnerPlugin extends Plugin {
     if (typeof value === "bigint") return value.toString();
     if (typeof value === "symbol") return value.toString();
     // Exhaustive for the runtime typeof values; kept as a defensive fallback.
-    return Object.prototype.toString.call(value);
+    return Object.prototype.toString.call(value) as string;
   }
 
   private formatObjectValue(value: object): string {
     try {
       return JSON.stringify(value, null, 2);
     } catch {
-      return Object.prototype.toString.call(value);
+      return Object.prototype.toString.call(value) as string;
     }
   }
 
@@ -369,7 +369,6 @@ class JSRunnerSettingTab extends PluginSettingTab {
     this.plugin = plugin;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-deprecated -- display() is deprecated since Obsidian 1.13 in favor of the declarative settings API, but that replacement isn't available on this plugin's minAppVersion, so the imperative override is still required for the settings tab to render at all.
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
