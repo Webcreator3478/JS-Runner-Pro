@@ -1,0 +1,11 @@
+{
+  "id": "js-runner-pro",
+  "name": "JS Runner PRO",
+  "version": "0.0.1",
+  "minAppVersion": "1.0.0",
+  "description": "Run JavaScript directly inside your Markdown notes using ```js-run code blocks.",
+  "author": "Jktaisa",
+  "authorUrl": "https://github.com/Webcreator3478",
+  "fundingUrl": "https://ko-fi.com/jktaisa",
+  "isDesktopOnly": true
+}

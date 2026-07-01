@@ -1,0 +1,164 @@
+/* ── JS Runner Plugin Styles ── */
+
+.js-runner-wrapper {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 0.75em 0;
+  background: var(--background-primary);
+  font-family: var(--font-monospace);
+}
+
+/* ── Code section ── */
+.js-runner-code-section {
+  background: var(--background-secondary);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.js-runner-wrapper .js-runner-pre {
+  margin: 0;
+  padding: 0.85em 1em;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+}
+
+.js-runner-code {
+  font-size: 0.88em;
+  color: var(--text-normal);
+}
+
+/* ── Controls bar ── */
+.js-runner-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--background-secondary-alt);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.js-runner-run-btn,
+.js-runner-clear-btn {
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--background-modifier-border);
+  cursor: pointer;
+  font-size: 0.8em;
+  font-family: var(--font-interface);
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.js-runner-run-btn {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-color: var(--interactive-accent);
+  font-weight: 600;
+}
+
+.js-runner-run-btn:hover:not(:disabled) {
+  filter: brightness(1.12);
+}
+
+.js-runner-run-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.js-runner-clear-btn {
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.js-runner-clear-btn:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.js-runner-status {
+  font-size: 0.75em;
+  font-family: var(--font-interface);
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.js-runner-status.running {
+  color: var(--text-accent);
+  background: var(--background-modifier-border);
+}
+
+.js-runner-status.done {
+  color: var(--color-green, #4caf50);
+  background: color-mix(in srgb, var(--color-green, #4caf50) 12%, transparent);
+}
+
+.js-runner-status.error {
+  color: var(--color-red, #e05252);
+  background: color-mix(in srgb, var(--color-red, #e05252) 12%, transparent);
+}
+
+/* ── Output section ── */
+.js-runner-output-section {
+  background: var(--background-primary);
+}
+
+.js-runner-output-label {
+  font-size: 0.7em;
+  font-family: var(--font-interface);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  padding: 4px 10px 2px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary-alt);
+}
+
+.js-runner-output {
+  padding: 0.6em 0.9em;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.js-runner-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 1px 0;
+  font-size: 0.85em;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.js-runner-line.js-runner-log .js-runner-text {
+  color: var(--text-normal);
+}
+
+.js-runner-line.js-runner-info .js-runner-text {
+  color: var(--text-accent);
+}
+
+.js-runner-line.js-runner-warn .js-runner-text {
+  color: var(--color-orange, #e8a04b);
+}
+
+.js-runner-line.js-runner-error .js-runner-text {
+  color: var(--color-red, #e05252);
+}
+
+.js-runner-line.js-runner-return .js-runner-text {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.js-runner-prefix {
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.js-runner-empty {
+  color: var(--text-faint);
+  font-size: 0.85em;
+  font-style: italic;
+}
