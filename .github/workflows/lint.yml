@@ -1,9 +1,9 @@
-name: Node.js build
+name: Lint check
 on:
     push:
         branches: ['**']
 jobs:
-    build:
+    lint:
         runs-on: ubuntu-latest
         strategy:
             matrix:
