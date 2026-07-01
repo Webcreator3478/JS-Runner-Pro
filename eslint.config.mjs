@@ -37,4 +37,14 @@ export default [
       "@typescript-eslint/no-unnecessary-type-assertion": "off",
     },
   },
+  {
+    // main.ts intentionally uses the Function constructor to execute
+    // user-authored code blocks from ```js-run fences — that's this
+    // plugin's entire purpose, so no-new-func (surfaced here under
+    // obsidianmd's custom message) is scoped off for this file only.
+    files: ["main.ts"],
+    rules: {
+      "no-new-func": "off",
+    },
+  },
 ];
